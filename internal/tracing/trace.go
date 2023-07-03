@@ -3,6 +3,7 @@ package tracing
 import (
 	"context"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/jaeger"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -61,9 +62,31 @@ type Context struct {
 }
 
 func (c Context) Record(name string, start, end time.Time) Context {
+	return c.Recording(name, start, end).End()
+}
+
+func (c Context) Recording(name string, start, end time.Time) Recording {
 	ctx, span := c.tracer.tracer.Start(c.ctx, name, trace.WithTimestamp(start))
-	span.AddEvent()
-	// TODO: do we need to do this in shutdown so we can mutate the span still?
-	span.End(trace.WithTimestamp(end))
-	return Context{c.tracer, ctx}
+	return Recording{
+		tracer: c.tracer,
+		ctx:    ctx,
+		end:    end,
+		span:   span,
+	}
+}
+
+type Recording struct {
+	tracer *Tracer
+	ctx    context.Context
+	end    time.Time
+	span   trace.Span
+}
+
+func (c Recording) Event(msg string, t time.Time, attrs ...attribute.KeyValue) {
+	c.span.AddEvent(msg, trace.WithTimestamp(t), trace.WithAttributes(attrs...))
+}
+
+func (c Recording) End() Context {
+	c.span.End(trace.WithTimestamp(c.end))
+	return Context{tracer: c.tracer, ctx: c.ctx}
 }

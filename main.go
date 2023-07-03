@@ -5,6 +5,7 @@ import (
 	"github.com/howardjohn/prow-tracing/internal/gcs"
 	"github.com/howardjohn/prow-tracing/internal/model"
 	"github.com/howardjohn/prow-tracing/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/exp/slog"
 	"regexp"
 	"time"
@@ -42,7 +43,11 @@ func main() {
 
 	root := trace.Record("job", prowjob.Status.StartTime.Time, prowjob.Status.CompletionTime.Time)
 
-	podCtx := root.Record("pod", pod.Pod.CreationTimestamp.Time, OrDefault(GetCondition(pod, "Ready"), fromEpoch(*finished.Timestamp)))
+	podRecord := root.Recording("pod", pod.Pod.CreationTimestamp.Time, OrDefault(GetCondition(pod, "Ready"), fromEpoch(*finished.Timestamp)))
+	for _, ev := range pod.Events {
+		podRecord.Event(ev.Reason, ev.FirstTimestamp.Time, attribute.String("message", ev.Message))
+	}
+	podCtx := podRecord.End()
 	if s := GetCondition(pod, "PodScheduled"); s != nil {
 		podCtx.Record("pod/schedule", pod.Pod.CreationTimestamp.Time, *s)
 	}
@@ -84,7 +89,7 @@ func GetCondition(pod model.PodReport, cond string) *time.Time {
 	return nil
 }
 
-var commandRegexp = regexp.MustCompile("git (.+?)\b")
+var commandRegexp = regexp.MustCompile("git (.+?)( |$)")
 
 func classifyGitCommand(command string) string {
 	m := commandRegexp.FindStringSubmatch(command)
