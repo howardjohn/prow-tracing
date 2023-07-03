@@ -81,7 +81,7 @@ func (gen *idGenerator) NewSpanID(ctx context.Context, traceID trace.TraceID) tr
 func (gen *idGenerator) NewIDs(ctx context.Context) (trace.TraceID, trace.SpanID) {
 	gen.Lock()
 	defer gen.Unlock()
-	u, _ := Parse(string(gen.pj.UID))
+	u, _ := Parse(gen.pj.Labels["prow.k8s.io/id"])
 	tid := trace.TraceID(u)
 	sid := trace.SpanID(u[0:8])
 	return tid, sid
@@ -95,7 +95,34 @@ func newIdGenerator(pj model.ProwJob) tracesdk.IDGenerator {
 	return gen
 }
 
-func New(pj model.ProwJob, attach bool) (Context, func(), error) {
+func NewAction(uid string) (Context, func(), error) {
+	otel.Tracer("prowjob")
+	exp, err := exporter()
+	if err != nil {
+		return Context{}, func() {}, err
+	}
+
+	tp := tracesdk.NewTracerProvider(
+		tracesdk.WithSampler(tracesdk.AlwaysSample()),
+		exp,
+		tracesdk.WithResource(resource.NewWithAttributes(semconv.SchemaURL, semconv.ServiceName("test"))),
+	)
+	tracer := tp.Tracer("prowjob-trace")
+	ctx := context.Background()
+	p := propagation.TraceContext{}
+	u, _ := Parse(uid)
+	parent := fmt.Sprintf("%02x-%032x-%016x-%02x", 1, u, u[0:8], 0)
+	ctx = p.Extract(ctx, propagation.MapCarrier{"traceparent": parent})
+	shutdown := func() {
+		tp.ForceFlush(context.Background())
+		tp.Shutdown(context.Background())
+	}
+
+	c := Context{tracer: tracer, ctx: ctx}
+	return c, shutdown, nil
+}
+
+func NewRoot(pj model.ProwJob) (Context, func(), error) {
 	otel.Tracer("prowjob")
 	exp, err := exporter()
 	if err != nil {
@@ -112,21 +139,12 @@ func New(pj model.ProwJob, attach bool) (Context, func(), error) {
 	)
 	tracer := tp.Tracer("prowjob-trace")
 	ctx := context.Background()
-	if attach {
-		p := propagation.TraceContext{}
-		u, _ := Parse(string(pj.UID))
-		parent := fmt.Sprintf("%02x-%032x-%016x-%02x", 1, u, u[0:8], 0)
-		ctx = p.Extract(ctx, propagation.MapCarrier{"traceparent": parent})
-	}
 	shutdown := func() {
 		tp.ForceFlush(context.Background())
 		tp.Shutdown(context.Background())
 	}
 
 	c := Context{tracer: tracer, ctx: ctx}
-	if !attach {
-		c = c.Record("job", pj.Status.StartTime.Time, pj.Status.CompletionTime.Time)
-	}
 	return c, shutdown, nil
 }
 

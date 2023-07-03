@@ -13,12 +13,46 @@ import (
 )
 
 func main() {
-	//job := os.Args[1]
+	cmd := ""
+	if len(os.Args) > 1 {
+		cmd = os.Args[1]
+	}
+	args := []string{}
+	if len(os.Args) > 2 {
+		args = os.Args[2:]
+	}
+	switch cmd {
+	case "", "prowjob":
+		prowjob(args)
+	case "test":
+		test(args)
+	}
+}
+
+func test(args []string) {
+	uid := os.Getenv("PROW_JOB_ID")
+	if uid == "" {
+		fatal(fmt.Errorf("PROW_JOB_ID required"))
+	}
+	root, shutdown, err := tracing.NewAction(uid)
+	fatal(err)
+	defer shutdown()
+	t0 := time.Date(2023, time.July, 01, 0, 0, 0, 0, time.UTC)
+	ec := root.Record("setup cluster", t0, t0.Add(time.Minute))
+	ec.Record("pull image", t0.Add(time.Second), t0.Add(time.Second*10))
+	cf := root.Record("test/conformance", t0.Add(time.Minute), t0.Add(time.Minute*12))
+	cf1 := cf.Record("test/conformance/subtest1", t0.Add(time.Minute+time.Second), t0.Add(time.Minute+time.Second*7))
+	cf1.Record("test/conformance/subtest1/apply-config", t0.Add(time.Minute+time.Second*2), t0.Add(time.Minute+time.Second*3))
+
+	cf.Record("test/conformance/subtest2", t0.Add(time.Minute+time.Second*8), t0.Add(time.Minute+time.Second*15))
+}
+
+func prowjob(args []string) {
+	// Temporary hard coded test job
 	job := "istio-prow/pr-logs/pull/istio_istio/45746/integ-pilot_istio/1674927910177214464"
-	// Hacky. If true, we just use the "job" span as the parent.
-	// This allows multiple binaries to report to the same span.
-	// TODO we probably want to report the root as one command, and each sub-command attaches. propogate parent ID by flag or env var.
-	attach := len(os.Args) > 1 && os.Args[1] == "attach"
+	if len(args) > 0 {
+		job = args[1]
+	}
 	client := gcs.NewClient(job)
 
 	prowjob, err := gcs.Fetch[model.ProwJob](client, "prowjob.json")
@@ -42,9 +76,11 @@ func main() {
 	slog.Info("check", "start", fromEpoch(start.Timestamp), "pj", prowjob.CreationTimestamp.Time)
 	slog.Info("check", "fin", fromEpoch(*finished.Timestamp), "pj", prowjob.CreationTimestamp.Time)
 
-	root, shutdown, err := tracing.New(prowjob, attach)
+	trace, shutdown, err := tracing.NewRoot(prowjob)
 	fatal(err)
 	defer shutdown()
+
+	root := trace.Record("job", prowjob.Status.StartTime.Time, prowjob.Status.CompletionTime.Time)
 
 	podRecord := root.Recording("pod", pod.Pod.CreationTimestamp.Time, OrDefault(GetCondition(pod, "Ready"), fromEpoch(*finished.Timestamp)))
 	for _, ev := range pod.Events {
