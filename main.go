@@ -7,6 +7,7 @@ import (
 	"github.com/howardjohn/prow-tracing/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/exp/slog"
+	"os"
 	"regexp"
 	"time"
 )
@@ -14,11 +15,14 @@ import (
 func main() {
 	//job := os.Args[1]
 	job := "istio-prow/pr-logs/pull/istio_istio/45746/integ-pilot_istio/1674927910177214464"
+	// Hacky. If true, we just use the "job" span as the parent.
+	// This allows multiple binaries to report to the same span.
+	// TODO we probably want to report the root as one command, and each sub-command attaches. propogate parent ID by flag or env var.
+	attach := len(os.Args) > 1 && os.Args[1] == "attach"
 	client := gcs.NewClient(job)
 
-	trace, err := tracing.New()
+	prowjob, err := gcs.Fetch[model.ProwJob](client, "prowjob.json")
 	fatal(err)
-	defer trace.Shutdown()
 
 	start, err := gcs.Fetch[model.Started](client, "started.json")
 	fatal(err)
@@ -27,9 +31,6 @@ func main() {
 	fatal(err)
 
 	pod, err := gcs.Fetch[model.PodReport](client, "podinfo.json")
-	fatal(err)
-
-	prowjob, err := gcs.Fetch[model.ProwJob](client, "prowjob.json")
 	fatal(err)
 
 	clone, err := gcs.Fetch[[]model.Record](client, "clone-records.json")
@@ -41,13 +42,17 @@ func main() {
 	slog.Info("check", "start", fromEpoch(start.Timestamp), "pj", prowjob.CreationTimestamp.Time)
 	slog.Info("check", "fin", fromEpoch(*finished.Timestamp), "pj", prowjob.CreationTimestamp.Time)
 
-	root := trace.Record("job", prowjob.Status.StartTime.Time, prowjob.Status.CompletionTime.Time)
+	root, shutdown, err := tracing.New(prowjob, attach)
+	fatal(err)
+	defer shutdown()
 
 	podRecord := root.Recording("pod", pod.Pod.CreationTimestamp.Time, OrDefault(GetCondition(pod, "Ready"), fromEpoch(*finished.Timestamp)))
 	for _, ev := range pod.Events {
+		// Record all events as events. TODO: extract some of these like "pulled image" into spans.
 		podRecord.Event(ev.Reason, ev.FirstTimestamp.Time, attribute.String("message", ev.Message))
 	}
 	podCtx := podRecord.End()
+
 	if s := GetCondition(pod, "PodScheduled"); s != nil {
 		podCtx.Record("pod/schedule", pod.Pod.CreationTimestamp.Time, *s)
 	}
