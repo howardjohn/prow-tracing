@@ -50,7 +50,7 @@ func test(args []string) {
 
 func prowjob(args []string) {
 	// Temporary hard coded test job
-	job := "istio-prow/pr-logs/pull/istio_istio/46046/integ-distroless_istio/1681058390027014144"
+	job := "istio-prow/pr-logs/pull/istio_istio/46048/integ-security-multicluster_istio/1681735600958345216"
 	if len(args) > 0 {
 		job = args[1]
 	}

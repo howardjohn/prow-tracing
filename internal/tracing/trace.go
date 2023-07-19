@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	tracesdk "go.opentelemetry.io/otel/sdk/trace"
@@ -25,13 +27,29 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-type Tracer struct {
-	tracer trace.Tracer
-	tp     *tracesdk.TracerProvider
-}
-
 func exporter() (tracesdk.TracerProviderOption, error) {
-	traceExporter, err := otlptrace.New(context.Background(), otlptracegrpc.NewClient())
+	proto := os.Getenv("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
+	if proto == "" {
+		proto = os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL")
+	}
+	if proto == "" {
+		proto = "grpc"
+	}
+
+	var c otlptrace.Client
+
+	switch proto {
+	case "grpc":
+		c = otlptracegrpc.NewClient()
+		log.Printf("using gRPC")
+	case "http/protobuf":
+		c = otlptracehttp.NewClient()
+		log.Printf("using HTTP")
+	// case "http/json": // unsupported by library
+	default:
+		return nil, fmt.Errorf("unsupported otlp protocol %v", proto)
+	}
+	traceExporter, err := otlptrace.New(context.Background(), c)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
 	}
@@ -93,8 +111,8 @@ func NewAction(uid string) (Context, func(), error) {
 	parent := fmt.Sprintf("%02x-%032x-%016x-%02x", 1, u, u[0:8], 0)
 	ctx = p.Extract(ctx, propagation.MapCarrier{"traceparent": parent})
 	shutdown := func() {
-		tp.ForceFlush(context.Background())
-		tp.Shutdown(context.Background())
+		log.Printf("flush %v\n", tp.ForceFlush(context.Background()))
+		log.Printf("shutdown %v\n", tp.Shutdown(context.Background()))
 	}
 
 	c := Context{tracer: tracer, ctx: ctx}
@@ -137,11 +155,6 @@ func attrFromProwjob(pj model.ProwJob) []attribute.KeyValue {
 	return res
 }
 
-func (t *Tracer) Shutdown() {
-	t.tp.ForceFlush(context.Background())
-	t.tp.Shutdown(context.Background())
-}
-
 type Context struct {
 	tracer trace.Tracer
 	ctx    context.Context
@@ -174,6 +187,7 @@ func (c Recording) Event(msg string, t time.Time, attrs ...attribute.KeyValue) {
 }
 
 func (c Recording) End() Context {
+	log.Printf("span %v ending", c.span.SpanContext().SpanID())
 	c.span.End(trace.WithTimestamp(c.end))
 	return Context{tracer: c.tracer, ctx: c.ctx}
 }
