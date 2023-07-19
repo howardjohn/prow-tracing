@@ -2,14 +2,15 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"regexp"
+	"time"
+
 	"github.com/howardjohn/prow-tracing/internal/gcs"
 	"github.com/howardjohn/prow-tracing/internal/model"
 	"github.com/howardjohn/prow-tracing/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/exp/slog"
-	"os"
-	"regexp"
-	"time"
 )
 
 func main() {
@@ -49,7 +50,7 @@ func test(args []string) {
 
 func prowjob(args []string) {
 	// Temporary hard coded test job
-	job := "istio-prow/pr-logs/pull/istio_istio/45746/integ-pilot_istio/1674927910177214464"
+	job := "istio-prow/pr-logs/pull/istio_istio/46046/integ-distroless_istio/1681058390027014144"
 	if len(args) > 0 {
 		job = args[1]
 	}

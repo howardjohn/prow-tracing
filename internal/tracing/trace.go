@@ -6,24 +6,23 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
+	"math/rand"
+	"strings"
+	"sync"
+	"time"
+
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
+
 	"github.com/howardjohn/prow-tracing/internal/model"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/jaeger"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	tracesdk "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 	"go.opentelemetry.io/otel/trace"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"math/rand"
-	"os"
-	"strings"
-	"sync"
-	"time"
 )
 
 type Tracer struct {
@@ -32,27 +31,7 @@ type Tracer struct {
 }
 
 func exporter() (tracesdk.TracerProviderOption, error) {
-	_ = jaeger.New
-	_ = os.Stdout
-	_ = stdouttrace.New
-	//exp, err := jaeger.New(jaeger.WithCollectorEndpoint(jaeger.WithEndpoint("http://localhost:14268/api/traces")))
-	//exp, err := stdouttrace.New(stdouttrace.WithWriter(os.Stdout), stdouttrace.WithPrettyPrint())
-	//if err != nil {
-	//	return nil, err
-	//}
-	//return tracesdk.WithBatcher(exp), nil
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	conn, err := grpc.DialContext(ctx, "localhost:4317",
-		// Note the use of insecure transport here. TLS is recommended in production.
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create gRPC connection to collector: %w", err)
-	}
-	traceExporter, err := otlptracegrpc.New(context.Background(), otlptracegrpc.WithGRPCConn(conn))
+	traceExporter, err := otlptrace.New(context.Background(), otlptracegrpc.NewClient())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
 	}
@@ -140,8 +119,8 @@ func NewRoot(pj model.ProwJob) (Context, func(), error) {
 	tracer := tp.Tracer("prowjob-trace")
 	ctx := context.Background()
 	shutdown := func() {
-		tp.ForceFlush(context.Background())
-		tp.Shutdown(context.Background())
+		log.Printf("flush %v\n", tp.ForceFlush(context.Background()))
+		log.Printf("shutdown %v\n", tp.Shutdown(context.Background()))
 	}
 
 	c := Context{tracer: tracer, ctx: ctx}
