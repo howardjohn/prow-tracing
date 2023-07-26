@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/howardjohn/prow-tracing/internal/gcs"
@@ -49,10 +51,12 @@ func test(args []string) {
 }
 
 func prowjob(args []string) {
-	// Temporary hard coded test job
-	job := "istio-prow/pr-logs/pull/istio_istio/46048/integ-security-multicluster_istio/1681735600958345216"
+	job := ""
 	if len(args) > 0 {
 		job = args[1]
+	}
+	if !strings.HasPrefix(job, "istio-prow/") {
+		log.Fatalf("job must be in format istio-prow/pr-logs/..., got %q", job)
 	}
 	client := gcs.NewClient(job)
 
